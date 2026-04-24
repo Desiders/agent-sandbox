@@ -7,10 +7,14 @@ RUN apt-get update && apt-get install -y \
     pkg-config libssl-dev \
     ca-certificates \
     nodejs npm \
+    python3 python3-pip python3-venv python3-dev \
+    build-essential \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 ARG USER_UID=1000
 RUN useradd -m -u ${USER_UID} -s /bin/bash agent
+
 RUN npm install -g @openai/codex
 
 RUN curl --proto '=https' --tlsv1.2 -sSf \
