@@ -9,6 +9,12 @@ run agent:
     docker run -it \
         --network host \
         --rm \
+        --init \
+        --security-opt seccomp=unconfined \
+        --security-opt label=disable \
+        --security-opt systempaths=unconfined \
+        --device /dev/fuse \
+        --device /dev/net/tun \
         -e AGENT={{agent}} \
         -v "{{project}}":/workspace \
         -v ~/.cargo/registry:/home/agent/.cargo/registry \

@@ -8,6 +8,8 @@ A minimal Docker-based sandbox for running the OpenAI Codex CLI or Claude Code w
 - Node.js + npm
 - Codex CLI and Claude Code preinstalled
 - Non-root user setup (`agent`)
+- Rootless Docker-in-Docker — the agent can build and run containers, with no
+  `--privileged` and no path to host root
 - Persistent caches for:
   - Cargo registry
   - Rustup toolchains
@@ -57,3 +59,30 @@ The container mounts:
 - `~/.claude` + `~/.claude.json` → Claude Code config
 
 This avoids re-downloading dependencies.
+
+---
+
+## Docker-in-Docker (rootless)
+
+The agent has a full Docker engine inside the sandbox, running **rootless** as
+the unprivileged `agent` user (rootlesskit + user namespaces + slirp4netns +
+fuse-overlayfs). The container starts with **no `--privileged`**, so a compromised
+agent cannot escape to the host.
+
+`just run` passes the flags rootless dockerd needs:
+
+- `--security-opt seccomp=unconfined` — allow the namespace syscalls rootlesskit uses
+- `--security-opt label=disable` — SELinux: don't confine the nested engine
+- `--security-opt systempaths=unconfined` — let nested containers mount their own `/proc`
+- `--device /dev/fuse` — storage driver (fuse-overlayfs)
+- `--device /dev/net/tun` — userspace networking (slirp4netns)
+
+The nested daemon's data lives in an anonymous volume at
+`~/.local/share/docker` and is **not** persisted across runs (`--rm`).
+
+### Requirements / notes
+- Host kernel must allow unprivileged user namespaces (default on Fedora).
+- The agent talks to the daemon via `DOCKER_HOST` (a per-user socket under
+  `$XDG_RUNTIME_DIR`); `docker` just works inside the container.
+- Rootless networking is userspace, so it is somewhat slower than a rootful
+  bridge; fine for builds and most workloads.
