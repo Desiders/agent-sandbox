@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 ARG USER_UID=1000
 RUN useradd -m -u ${USER_UID} -s /bin/bash agent
 
-RUN npm install -g @openai/codex
+RUN npm install -g @openai/codex @anthropic-ai/claude-code
 
 RUN curl --proto '=https' --tlsv1.2 -sSf \
     https://just.systems/install.sh | bash -s -- --to /usr/local/bin

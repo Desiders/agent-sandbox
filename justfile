@@ -5,21 +5,24 @@ build:
         --build-arg USER_UID=$(id -u) \
         -t agent-sandbox .
 
-run:
+run agent:
     docker run -it \
         --network host \
         --rm \
+        -e AGENT={{agent}} \
         -v "{{project}}":/workspace \
         -v ~/.cargo/registry:/home/agent/.cargo/registry \
         -v ~/.rustup:/home/agent/.rustup \
         -v ~/.codex:/home/agent/.codex \
+        -v ~/.claude:/home/agent/.claude \
+        -v ~/.claude.json:/home/agent/.claude.json \
         -w /workspace \
         agent-sandbox
 
-up: build run
+up agent: build (run agent)
 
-work path:
-    PROJECT={{path}} just up
+work path agent:
+    PROJECT={{path}} just up {{agent}}
 
 ps:
     docker ps --filter ancestor=agent-sandbox
