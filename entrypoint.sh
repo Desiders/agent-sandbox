@@ -36,18 +36,27 @@ export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/docker.sock"
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.local/share/docker"
 chmod 700 "$XDG_RUNTIME_DIR"
 
-rootlesskit \
+# Redirect stdin too, not just stdout/stderr: otherwise the whole rootlesskit ->
+# dockerd -> containerd tree inherits our TTY on fd 0. Job control is off in a
+# script, so `&` leaves the daemon in the foreground process group, where reads
+# from the terminal succeed instead of raising SIGTTIN. It steals bytes, and the
+# TUI agent inserts the truncated escape sequences as literal text
+# ("[I5;121;5M..."). Keep both: setsid removes the controlling terminal (also
+# for nested containers), </dev/null keeps fd 0 off the TTY.
+setsid rootlesskit \
     --net=slirp4netns \
     --mtu=1500 \
     --disable-host-loopback \
     --port-driver=builtin \
     --copy-up=/etc \
     --copy-up=/run \
-    dockerd --host="$DOCKER_HOST" > /tmp/dockerd.log 2>&1 &
+    dockerd --host="$DOCKER_HOST" </dev/null > /tmp/dockerd.log 2>&1 &
 DOCKERD_PID=$!
 
 # Wait for the socket. If dockerd dies during boot, surface the log and exit.
-while ! docker info >/dev/null 2>&1; do
+# $! is still the daemon: job control is off, so setsid execs in place, no fork.
+# </dev/null so the CLI can never prompt on our TTY either.
+while ! docker info </dev/null >/dev/null 2>&1; do
     if ! kill -0 "$DOCKERD_PID" 2>/dev/null; then
         echo "rootless dockerd exited during startup; last log lines:" >&2
         tail -n 50 /tmp/dockerd.log >&2 || true
@@ -55,10 +64,20 @@ while ! docker info >/dev/null 2>&1; do
     fi
     sleep 1
 done
-echo "Rootless Docker daemon is ready"
+# stderr, to keep stdout clean for the TUI agent.
+echo "Rootless Docker daemon is ready" >&2
 
 if [ -d /workspace/.git ]; then
     git config --global --add safe.directory /workspace || true
+fi
+
+# dockerd's boot, a git/ssh prompt or a killed TUI can leave mouse reporting or
+# bracketed paste enabled; the agent then gets escape sequences it never asked
+# for and echoes the tail as text. Reset them, but only on a real terminal.
+if [ -t 0 ]; then
+    # mouse tracking, SGR encoding, focus events, bracketed paste
+    printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1004l\033[?2004l'
+    stty sane 2>/dev/null || true
 fi
 
 exec "$@"

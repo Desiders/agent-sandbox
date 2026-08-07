@@ -2,10 +2,15 @@ FROM rust:slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# ncurses-*: rust:slim ships no terminfo, so TERM=xterm-256color is unknown and
+# the TUI misrenders. openssh-client: git-over-ssh needs a real ssh to honour
+# the options set below instead of prompting on the TTY mid-session.
 RUN apt-get update && apt-get install -y \
     curl git \
+    openssh-client \
     pkg-config libssl-dev \
     ca-certificates \
+    ncurses-base ncurses-term \
     nodejs npm \
     python3 python3-pip python3-venv python3-dev \
     build-essential \
@@ -60,6 +65,14 @@ RUN setcap cap_setuid+ep /usr/bin/newuidmap \
     && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap
 
 ENV HOME=/home/agent
+
+# Fallback terminal; `just run` forwards the host's real one and overrides it.
+ENV TERM=xterm-256color
+# Never prompt on the TTY the TUI owns — the agent would swallow the input.
+# accept-new records unknown host keys instead of asking about them mid-session.
+ENV GIT_TERMINAL_PROMPT=0
+ENV GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
 WORKDIR /workspace
 
 COPY entrypoint.sh /entrypoint.sh

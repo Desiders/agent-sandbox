@@ -69,6 +69,9 @@ the unprivileged `agent` user (rootlesskit + user namespaces + slirp4netns +
 fuse-overlayfs). The container starts with **no `--privileged`**, so a compromised
 agent cannot escape to the host.
 
+It runs on the default bridge network, **not** `--network host`, so services on
+the host's `127.0.0.1` are out of reach.
+
 `just run` passes the flags rootless dockerd needs:
 
 - `--security-opt seccomp=unconfined` — allow the namespace syscalls rootlesskit uses
