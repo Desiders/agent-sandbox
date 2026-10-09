@@ -1,4 +1,4 @@
-FROM rust:slim
+FROM public.ecr.aws/docker/library/rust:slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
