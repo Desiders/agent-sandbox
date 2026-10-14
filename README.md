@@ -40,7 +40,7 @@ Kache is off by default and applies only to the Rust image:
 KACHE=1 just work rust /absolute/path/to/project codex
 ```
 
-This installs and configures Kache and mounts `~/.cache/kache-shared`.
+This installs and configures Kache and mounts the existing host `~/.cache/kache`.
 For separate `build` and `run` commands, use `KACHE=1` for both.
 
 On the host, [install Kache](https://kunobi.ninja/docs/kache/getting-started/installation)
@@ -50,10 +50,11 @@ and run `kache init` once. To share artifacts, set this in
 ```toml
 [cache.remote]
 type = "filesystem"
-path = "~/.cache/kache-shared"
+path = "~/.cache/kache"
 prefix = "artifacts"
 ```
 
+Run `kache sync --push` to share artifacts already cached on the host.
 Then use Cargo normally. Hits require matching Rust toolchains, targets, and
 build settings. Run `kache daemon stop` before leaving the sandbox to finish uploads.
 For a custom directory, set `KACHE_SHARED_DIR` to an absolute path and use it in the host config.

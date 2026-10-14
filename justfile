@@ -1,6 +1,6 @@
 project := absolute_path(env_var_or_default("PROJECT", "."))
 kache := env_var_or_default("KACHE", "0")
-kache_shared_dir := env_var_or_default("KACHE_SHARED_DIR", env_var("HOME") / ".cache/kache-shared")
+kache_shared_dir := env_var_or_default("KACHE_SHARED_DIR", env_var("HOME") / ".cache/kache")
 
 build image fresh="0":
     docker build {{if fresh == "1" { "--pull --no-cache" } else { "" }}} \
