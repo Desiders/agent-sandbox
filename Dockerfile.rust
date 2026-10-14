@@ -1,0 +1,106 @@
+ARG RUST_IMAGE=public.ecr.aws/docker/library/rust:1.95-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+ARG DEBIAN_IMAGE=public.ecr.aws/docker/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+FROM ${RUST_IMAGE} AS rust-toolchain
+FROM ${NODE_IMAGE} AS node-runtime
+FROM ${DEBIAN_IMAGE}
+
+LABEL org.desiders.agent-sandbox=true
+ENV DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+
+# Cache downloads outside the image; Debian's docker-clean would remove them.
+RUN --mount=type=cache,id=agent-sandbox-rust-trixie-archives-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=agent-sandbox-rust-trixie-lists-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
+    && apt-get update --error-on=any \
+    && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git openssh-client \
+        pkg-config libssl-dev ncurses-base ncurses-term \
+        python3 python3-pip python3-venv python3-dev ripgrep
+
+# Claude Code needs Node 22+; reuse the Node 24 runtime instead of Debian's nodejs.
+COPY --link --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --link --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+
+# Signed Docker packages supply the rootless engine and its networking helpers.
+RUN --mount=type=cache,id=agent-sandbox-rust-trixie-archives-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=agent-sandbox-rust-trixie-lists-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    install -m 0755 -d /etc/apt/keyrings \
+    && curl --proto '=https' --tlsv1.2 -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update --error-on=any \
+    && apt-get install -y --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras \
+        uidmap slirp4netns fuse-overlayfs iproute2 procps libcap2-bin
+
+ARG CODEX_VERSION=0.162.1
+ARG CLAUDE_VERSION=2.1.296
+RUN --mount=type=cache,id=agent-sandbox-npm-${TARGETARCH},target=/root/.npm \
+    ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && npm install -g --no-fund "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
+
+ARG JUST_VERSION=1.58.0
+RUN --mount=type=bind,source=scripts/install-just.sh,target=/tmp/install-just.sh \
+    /bin/sh /tmp/install-just.sh "${JUST_VERSION}"
+
+# Optional compiler caching is confined to this Rust image.
+ARG INSTALL_KACHE=0
+ARG KACHE_VERSION=1.1.1
+RUN --mount=type=cache,id=agent-sandbox-rust-trixie-archives-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=agent-sandbox-rust-trixie-lists-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    if [ "${INSTALL_KACHE}" = "1" ]; then \
+        install -m 0755 -d /etc/apt/keyrings \
+        && curl --proto '=https' --tlsv1.2 -fsSL \
+            https://r2.kunobi.com/kache/apt/gpg.key -o /etc/apt/keyrings/kache.asc \
+        && chmod a+r /etc/apt/keyrings/kache.asc \
+        && echo 'deb [signed-by=/etc/apt/keyrings/kache.asc] https://r2.kunobi.com/kache/apt stable main' > /etc/apt/sources.list.d/kache.list \
+        && apt-get update --error-on=any \
+        && apt-get install -y --no-install-recommends "kache=${KACHE_VERSION}-1"; \
+    fi
+
+# Host ownership changes do not invalidate package installation.
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+RUN ln -s /usr/local/cargo/bin/cargo /usr/bin/cargo \
+    && ln -s /usr/local/cargo/bin/rustc /usr/bin/rustc \
+    && if ! getent group ${USER_GID} >/dev/null; then groupadd -g ${USER_GID} agent; fi \
+    && useradd -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash agent \
+    && printf 'agent:100000:65536\n' > /etc/subuid \
+    && printf 'agent:100000:65536\n' > /etc/subgid \
+    && setcap cap_setuid+ep /usr/bin/newuidmap \
+    && setcap cap_setgid+ep /usr/bin/newgidmap \
+    && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
+    && mkdir -p /workspace /run/user/${USER_UID} /home/agent/.local/share/docker \
+    && chown -R ${USER_UID}:${USER_GID} /workspace /run/user/${USER_UID} /home/agent \
+    && chmod 700 /run/user/${USER_UID}
+
+ENV HOME=/home/agent \
+    TERM=xterm-256color \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+    XDG_RUNTIME_DIR=/run/user/${USER_UID} \
+    DOCKER_HOST=unix:///run/user/${USER_UID}/docker.sock
+
+ENV PATH="/usr/local/cargo/bin:${PATH}" \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup
+
+WORKDIR /workspace
+COPY --link --chmod=644 kache.toml /etc/kache.toml
+# Small runtime file changes leave all tool installation layers cached.
+COPY --link --chmod=755 entrypoint.sh /entrypoint.sh
+
+# Independent final copies retain the toolchain cache when runtime files change.
+# Setting ownership here avoids a second toolchain layer just for chown.
+COPY --link --from=rust-toolchain --chown=${USER_UID}:${USER_GID} /usr/local/cargo /usr/local/cargo
+COPY --link --from=rust-toolchain --chown=${USER_UID}:${USER_GID} /usr/local/rustup /usr/local/rustup
+
+VOLUME /home/agent/.local/share/docker
+USER ${USER_UID}
+ENTRYPOINT ["/entrypoint.sh"]
+CMD []

@@ -1,91 +1,66 @@
 # Agent Sandbox
 
-A minimal Docker-based sandbox for running the OpenAI Codex CLI or Claude Code with Rust support.
-
-## Features
-
-- Rust toolchain (cargo, rustc)
-- Node.js + npm
-- Codex CLI and Claude Code preinstalled
-- Non-root user setup (`agent`)
-- Rootless Docker-in-Docker — the agent can build and run containers, with no
-  `--privileged` and no path to host root
-- Persistent caches for:
-  - Cargo registry
-  - Rustup toolchains
-  - Codex config
-  - Claude Code config
-- `just` command runner for easy workflows
-
----
+Run Codex or Claude Code in a Docker image suited to your project.
 
 ## Requirements
 
-- Docker
-- `just` (optional but recommended)
+- Docker with BuildKit and `just` (`cargo install just`)
+- Linux with unprivileged user namespaces, `/dev/fuse`, and `/dev/net/tun`
 
-Install `just`:
-```bash
-cargo install just
-```
+## Usage
 
----
-
-## Run command
-
-The agent to run is required — pass `codex` or `claude`:
-```bash
-just work /absolute/path/to/project codex
-just work /absolute/path/to/project claude
-```
-
----
-
-## Other commands
+Choose `rust` or `node`:
 
 ```bash
-just ps
-just stop
-just clean
+just work rust /absolute/path/to/project codex
+just work node /absolute/path/to/project claude
 ```
 
----
+Each image has its own Dockerfile and tag (`agent-sandbox:rust` or
+`agent-sandbox:node`). Both include the agents, Git, Python, and rootless Docker.
+Both use Node.js 24 for the agents; the Rust image also includes Rust 1.95.
 
-## Persistent Volumes
-The container mounts:
-- `~/.cargo/registry` → Cargo cache
-- `~/.rustup` → Rust toolchains
-- `~/.codex` → Codex config
-- `~/.claude` + `~/.claude.json` → Claude Code config
+```bash
+just build rust      # build one image
+just rebuild rust    # refresh packages without reusing image layers
+just run rust codex  # run it in the current project
+just ps              # list all running sandboxes
+just stop            # stop them
+just clean node      # remove one image
+```
 
-This avoids re-downloading dependencies.
+Builds cache APT/npm downloads and pin base images, agent CLIs, and `just`.
+Changing your UID or the entrypoint preserves the tool-installation cache.
 
----
+## Optional Rust cache
 
-## Docker-in-Docker (rootless)
+Kache is off by default and applies only to the Rust image:
 
-The agent has a full Docker engine inside the sandbox, running **rootless** as
-the unprivileged `agent` user (rootlesskit + user namespaces + slirp4netns +
-fuse-overlayfs). The container starts with **no `--privileged`**, so a compromised
-agent cannot escape to the host.
+```bash
+KACHE=1 just work rust /absolute/path/to/project codex
+```
 
-It runs on the default bridge network, **not** `--network host`, so services on
-the host's `127.0.0.1` are out of reach.
+This installs and configures Kache and mounts `~/.cache/kache-shared`.
+For separate `build` and `run` commands, use `KACHE=1` for both.
 
-`just run` passes the flags rootless dockerd needs:
+On the host, [install Kache](https://kunobi.ninja/docs/kache/getting-started/installation)
+and run `kache init` once. To share artifacts, set this in
+`~/.config/kache/config.toml` (or `$XDG_CONFIG_HOME/kache/config.toml`):
 
-- `--security-opt seccomp=unconfined` — allow the namespace syscalls rootlesskit uses
-- `--security-opt label=disable` — SELinux: don't confine the nested engine
-- `--security-opt systempaths=unconfined` — let nested containers mount their own `/proc`
-- `--device /dev/fuse` — storage driver (fuse-overlayfs)
-- `--device /dev/net/tun` — userspace networking (slirp4netns)
+```toml
+[cache.remote]
+type = "filesystem"
+path = "~/.cache/kache-shared"
+prefix = "artifacts"
+```
 
-The nested daemon's data lives in an anonymous volume at
-`~/.local/share/docker` and is **not** persisted across runs (`--rm`).
+Then use Cargo normally. Hits require matching Rust toolchains, targets, and
+build settings. Run `kache daemon stop` before leaving the sandbox to finish uploads.
+For a custom directory, set `KACHE_SHARED_DIR` to an absolute path and use it in the host config.
 
-### Requirements / notes
-- Host kernel must allow unprivileged user namespaces (default on Fedora).
-- The agent talks to the daemon via `DOCKER_HOST` (a per-user socket under
-  `$XDG_RUNTIME_DIR`); `docker` just works inside the container.
-- Rootless networking is userspace, so it is somewhat slower than a rootful
-  bridge; fine for builds and most workloads.
+## Persistent data
+
+Both images mount the project at `/workspace` and reuse host Codex/Claude settings.
+Only Rust mounts the host Cargo registry; each image manages its own toolchain.
+Host settings and cache paths must already exist.
+Nested Docker containers and images are discarded when the sandbox exits.
