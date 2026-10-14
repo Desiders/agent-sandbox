@@ -44,7 +44,8 @@ This installs and configures Kache and mounts the existing host `~/.cache/kache`
 For separate `build` and `run` commands, use `KACHE=1` for both.
 
 On the host, [install Kache](https://kunobi.ninja/docs/kache/getting-started/installation)
-and run `kache init` once. To share artifacts, set this in
+and run `kache init` once to configure Cargo. Then use `kache config` to set
+the filesystem remote below and press `s` to save. This creates
 `~/.config/kache/config.toml` (or `$XDG_CONFIG_HOME/kache/config.toml`):
 
 ```toml
