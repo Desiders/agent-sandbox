@@ -30,7 +30,9 @@ esac
 # docker:dind-rootless entrypoint, rather than dockerd-rootless.sh: that script
 # enables RootlessKit's detach-netns mode and runs a `sysctl net.ipv4.ip_forward`
 # step that is rejected inside an unprivileged container. dockerd has built-in
-# rootless support and configures the netns/storage itself.
+# rootless support and configures the network namespace itself.
+# Select FUSE explicitly: Docker 29's default containerd overlayfs snapshotter
+# can fail to mount layers inside a nested container.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/docker.sock"
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.local/share/docker"
@@ -50,7 +52,9 @@ setsid rootlesskit \
     --port-driver=builtin \
     --copy-up=/etc \
     --copy-up=/run \
-    dockerd --host="$DOCKER_HOST" </dev/null > /tmp/dockerd.log 2>&1 &
+    dockerd --host="$DOCKER_HOST" \
+        --feature containerd-snapshotter=false \
+        --storage-driver=fuse-overlayfs </dev/null > /tmp/dockerd.log 2>&1 &
 DOCKERD_PID=$!
 
 # Wait for the socket. If dockerd dies during boot, surface the log and exit.

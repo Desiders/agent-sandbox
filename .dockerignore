@@ -1,0 +1,7 @@
+**
+!Dockerfile.node
+!Dockerfile.rust
+!entrypoint.sh
+!kache.toml
+!scripts/
+!scripts/install-just.sh

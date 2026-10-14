@@ -1,49 +1,49 @@
-project := env_var_or_default("PROJECT", ".")
+project := absolute_path(env_var_or_default("PROJECT", "."))
+kache := env_var_or_default("KACHE", "0")
+kache_shared_dir := env_var_or_default("KACHE_SHARED_DIR", env_var("HOME") / ".cache/kache")
 
-build:
-    # Docker creates a directory for any missing mount source, which would turn
-    # ~/.claude.json into a directory. Create the real paths first.
-    touch ~/.claude.json
-    mkdir -p ~/.claude ~/.codex ~/.cargo/registry ~/.rustup
-    docker build \
-        --build-arg USER_UID=$(id -u) \
-        -t agent-sandbox .
+build image fresh="0":
+    docker build {{if fresh == "1" { "--pull --no-cache" } else { "" }}} \
+        --build-arg USER_UID="$(id -u)" --build-arg USER_GID="$(id -g)" \
+        {{if image == "rust" { "--build-arg INSTALL_KACHE=" + quote(kache) } else { "" }}} \
+        -f Dockerfile.{{quote(image)}} -t agent-sandbox:{{quote(image)}} .
 
-run agent:
-    # No --network host: it would give the agent the host's network namespace,
-    # including everything on 127.0.0.1. The default bridge is enough.
-    # -e TERM/-e COLORTERM forward the host's real terminal, so the agent emits
-    # only escape sequences this terminal understands.
-    docker run -it \
-        --rm \
-        --init \
+rebuild image:
+    just build {{quote(image)}} 1
+
+run image agent:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    if [[ {{quote(image)}} == rust ]]; then
+        args+=(--mount "type=bind,src=$HOME/.cargo/registry,dst=/usr/local/cargo/registry")
+        if [[ {{quote(kache)}} == 1 ]]; then
+            args+=(-e RUSTC_WRAPPER=kache -e KACHE_CONFIG=/etc/kache.toml)
+            args+=(--mount type=bind,src={{quote(kache_shared_dir)}},dst=/home/agent/.cache/kache-shared)
+        fi
+    fi
+    docker run -it --rm --init \
         --security-opt seccomp=unconfined \
         --security-opt label=disable \
         --security-opt systempaths=unconfined \
-        --device /dev/fuse \
-        --device /dev/net/tun \
-        -e AGENT={{agent}} \
-        -e TERM \
-        -e COLORTERM \
-        -v "{{project}}":/workspace \
-        -v ~/.cargo/registry:/home/agent/.cargo/registry \
-        -v ~/.rustup:/home/agent/.rustup \
-        -v ~/.codex:/home/agent/.codex \
-        -v ~/.claude:/home/agent/.claude \
-        -v ~/.claude.json:/home/agent/.claude.json \
-        -w /workspace \
-        agent-sandbox
+        --device /dev/fuse --device /dev/net/tun \
+        -e AGENT={{quote(agent)}} -e TERM -e COLORTERM \
+        --mount type=bind,src={{quote(project)}},dst=/workspace "${args[@]}" \
+        --mount "type=bind,src=$HOME/.codex,dst=/home/agent/.codex" \
+        --mount "type=bind,src=$HOME/.claude,dst=/home/agent/.claude" \
+        --mount "type=bind,src=$HOME/.claude.json,dst=/home/agent/.claude.json" \
+        -w /workspace agent-sandbox:{{quote(image)}}
 
-up agent: build (run agent)
+up image agent: (build image) (run image agent)
 
-work path agent:
-    PROJECT={{path}} just up {{agent}}
+work image path agent:
+    PROJECT={{quote(path)}} just up {{quote(image)}} {{quote(agent)}}
 
 ps:
-    docker ps --filter ancestor=agent-sandbox
+    docker ps --filter label=org.desiders.agent-sandbox=true
 
 stop:
-    docker ps -q --filter ancestor=agent-sandbox | xargs -r docker stop
+    docker ps -q --filter label=org.desiders.agent-sandbox=true | xargs -r docker stop
 
-clean:
-    docker rmi agent-sandbox
+clean image:
+    docker rmi agent-sandbox:{{quote(image)}}

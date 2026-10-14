@@ -1,0 +1,71 @@
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+FROM ${NODE_IMAGE}
+
+LABEL org.desiders.agent-sandbox=true
+ENV DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+
+# Cache downloads outside the image; Debian's docker-clean would remove them.
+RUN --mount=type=cache,id=agent-sandbox-node-bookworm-archives-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=agent-sandbox-node-bookworm-lists-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
+    && apt-get update --error-on=any \
+    && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git openssh-client \
+        pkg-config libssl-dev ncurses-base ncurses-term \
+        python3 python3-pip python3-venv python3-dev ripgrep
+
+# Signed Docker packages supply the rootless engine and its networking helpers.
+RUN --mount=type=cache,id=agent-sandbox-node-bookworm-archives-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=agent-sandbox-node-bookworm-lists-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    install -m 0755 -d /etc/apt/keyrings \
+    && curl --proto '=https' --tlsv1.2 -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update --error-on=any \
+    && apt-get install -y --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras \
+        uidmap slirp4netns fuse-overlayfs iproute2 procps libcap2-bin
+
+ARG CODEX_VERSION=0.162.1
+ARG CLAUDE_VERSION=2.1.296
+RUN --mount=type=cache,id=agent-sandbox-npm-${TARGETARCH},target=/root/.npm \
+    npm install -g --no-fund "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
+
+ARG JUST_VERSION=1.58.0
+RUN --mount=type=bind,source=scripts/install-just.sh,target=/tmp/install-just.sh \
+    /bin/sh /tmp/install-just.sh "${JUST_VERSION}"
+
+# Host ownership changes do not invalidate package installation.
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+RUN userdel --remove node \
+    && if getent group node >/dev/null; then groupdel node; fi \
+    && if ! getent group ${USER_GID} >/dev/null; then groupadd -g ${USER_GID} agent; fi \
+    && useradd -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash agent \
+    && printf 'agent:100000:65536\n' > /etc/subuid \
+    && printf 'agent:100000:65536\n' > /etc/subgid \
+    && setcap cap_setuid+ep /usr/bin/newuidmap \
+    && setcap cap_setgid+ep /usr/bin/newgidmap \
+    && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
+    && mkdir -p /workspace /run/user/${USER_UID} /home/agent/.local/share/docker \
+    && chown -R ${USER_UID}:${USER_GID} /workspace /run/user/${USER_UID} /home/agent \
+    && chmod 700 /run/user/${USER_UID}
+
+ENV HOME=/home/agent \
+    TERM=xterm-256color \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+    XDG_RUNTIME_DIR=/run/user/${USER_UID} \
+    DOCKER_HOST=unix:///run/user/${USER_UID}/docker.sock
+
+WORKDIR /workspace
+# Small runtime file changes leave all tool installation layers cached.
+COPY --link --chmod=755 entrypoint.sh /entrypoint.sh
+
+VOLUME /home/agent/.local/share/docker
+USER ${USER_UID}
+ENTRYPOINT ["/entrypoint.sh"]
+CMD []

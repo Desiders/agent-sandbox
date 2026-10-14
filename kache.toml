@@ -1,0 +1,6 @@
+# This expands to the host user's or container agent's home directory.
+# Keep local_store and runtime_dir at their per-environment defaults.
+[cache.remote]
+type = "filesystem"
+path = "~/.cache/kache-shared"
+prefix = "artifacts"
