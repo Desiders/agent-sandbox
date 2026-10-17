@@ -64,6 +64,7 @@ RUN --mount=type=cache,id=agent-sandbox-rust-trixie-archives-${TARGETARCH},targe
     fi
 
 # Host ownership changes do not invalidate package installation.
+# Pre-create cache mount paths so Docker does not create root-owned parents.
 ARG USER_UID=1000
 ARG USER_GID=${USER_UID}
 RUN ln -s /usr/local/cargo/bin/cargo /usr/bin/cargo \
@@ -76,6 +77,7 @@ RUN ln -s /usr/local/cargo/bin/cargo /usr/bin/cargo \
     && setcap cap_setgid+ep /usr/bin/newgidmap \
     && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
     && mkdir -p /workspace /run/user/${USER_UID} /home/agent/.local/share/docker \
+        /home/agent/.cache/kache /home/agent/.cache/kache-shared \
     && chown -R ${USER_UID}:${USER_GID} /workspace /run/user/${USER_UID} /home/agent \
     && chmod 700 /run/user/${USER_UID}
 
