@@ -19,6 +19,11 @@ just work node /absolute/path/to/project claude
 Each image has its own Dockerfile and tag (`agent-sandbox:rust` or
 `agent-sandbox:node`). Both include the agents, Git, Python, and rootless Docker.
 Both use Node.js 24 for the agents; the Rust image also includes Rust 1.95.
+Codex runs with full access inside the container and approval prompts disabled
+(`-s danger-full-access -a never`).
+Codex startup update checks and Claude automatic updates are disabled in the
+container. Agent versions are pinned in the Dockerfiles; change those pins and
+rebuild to update them.
 
 ```bash
 just build rust      # build one image
@@ -59,6 +64,11 @@ Run `kache sync --push` to share artifacts already cached on the host.
 Then use Cargo normally. Hits require matching Rust toolchains, targets, and
 build settings. Run `kache daemon stop` before leaving the sandbox to finish uploads.
 For a custom directory, set `KACHE_SHARED_DIR` to an absolute path and use it in the host config.
+
+The Rust image creates agent-owned local cache directories before Docker mounts
+the shared cache. Older images can have a root-owned `/home/agent/.cache`, causing
+Kache to fail with `Permission denied` when creating its local cache index.
+Rebuild with `KACHE=1 just build rust` and start a new sandbox to apply the fix.
 
 ## Persistent data
 
