@@ -6,9 +6,11 @@ set -e
 # container are forwarded to the agent.
 case "$AGENT" in
     codex)
-        set -- codex -s danger-full-access -a on-request "$@"
+        set -- codex -s danger-full-access -a never \
+            -c check_for_update_on_startup=false "$@"
         ;;
     claude)
+        export DISABLE_AUTOUPDATER=1
         set -- claude --dangerously-skip-permissions "$@"
         ;;
     "")
